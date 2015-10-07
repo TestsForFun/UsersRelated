@@ -19,7 +19,7 @@ from tornado.options import options, define, parse_config_file
 
 define('USE_DB', default=True, help='Using Momoko')
 define('FILL_DB', default=False, help='Fill db with test data')
-define('USE_RC', default=False, help='Using Redis')
+define('USE_RC', default=True, help='Using Redis')
 define('FLUSH_RC', default=False, help='Flush old data')
 define('TABLE_NAME', default='ipaddresses', help='Name of big table')
 define('TEST_COUNT', default=100000, help='Count of test inserts')
@@ -57,24 +57,32 @@ class MainHandler(BaseHandler):
     def get(self):
         first_user_id = int(self.request.arguments['first_user_id'][0])
         second_user_id = int(self.request.arguments['second_user_id'][0])
+        result = False
 
         if options.USE_RC: 
-            sstring = '%s#%s' % (first_user_id,second_user_id)
+            sstring = '%s#%s' % (first_user_id, second_user_id)
             result = self.rc.sismember('Related', sstring)
             if not result:
-                self.rc.sadd('Related', sstring) 
-
-        if options.USE_DB: 
-            for uid in (first_user_id, second_user_id):
-                cursor = yield self.db.execute("SELECT host(ip) FROM %s where user_id=%i;" % (
-                    options.TABLE_NAME,
-                    uid
+                logging.info('No matches for %i and %i found before' % (
+                    first_user_id, second_user_id
                 ))
-                result = cursor.fetchone()
+                if options.USE_DB: 
+                    logging.info('Trying to analyse DB...')
+                    for uid in (first_user_id, second_user_id):
+                        if self.rc.scard(uid) > 0:
+                            self.rc.expire(uid,300)
+                        cursor = yield self.db.execute("SELECT host(ip) FROM %s where user_id=%i;" % (
+                            options.TABLE_NAME,
+                            uid
+                        ))
+                        for ips in cursor.fetchall():
+                            self.rc.sadd(uid,ips[0])
+                    if self.rc.scard(first_user_id) > self.rc.scard(second_user_id):        
+                        self.rc.sadd('Related', sstring) 
+                        result = True
 
-        self.write("Users %s and %s are related: %s." % (
-            self.request.arguments['first_user_id'][0], 
-            self.request.arguments['second_user_id'][0], 
+        self.write("Users %i and %i are related: %s." % (
+            first_user_id, second_user_id, 
             result
         ))
         self.finish()
@@ -83,7 +91,7 @@ if __name__ == "__main__":
     try:
         parse_config_file('config.conf')
     except:
-        logging.info('No config file ./config.conf')
+        logging.info('Config file ./config.conf not found')
 
     application = tornado.web.Application([
         (r"/user_relations/", MainHandler),
