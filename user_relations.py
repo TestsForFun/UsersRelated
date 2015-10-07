@@ -8,31 +8,73 @@
 
 """
 
-import tornado.ioloop
-import tornado.web
-from tornado.options import parse_command_line, define, options
 import redis
-import logging
-from string import split
-from random import randint
+import psycopg2
+import momoko
+import tornado.web
+import tornado.ioloop
 from datetime import datetime
+from tornado.options import options, define, parse_config_file
 
-logging.basicConfig(level=logging.DEBUG)
-log = logging.getLogger('main')
+define('USE_DB', default=True, help='Using Momoko')
+define('USE_RC', default=False, help='Using Redis')
+define('FLUSH_RC', default=False, help='Flush old data')
 
-redisConnectionPool = redis.ConnectionPool(host='localhost', port=6379, db=12)
-redisClient = redis.Redis(connection_pool=redisConnectionPool)
+class BaseHandler(tornado.web.RequestHandler):
+    @property
+    def db(self):
+        return self.application.db
+    @property
+    def rc(self):
+        return self.application.rc
 
-## Uncomment if dont want old data after restart
-#redisClient.flushdb()
-
-
-
-application = tornado.web.Application([
-    (r"/user_relations/", MainHandler),
-])
+class MainHandler(BaseHandler):
+    @tornado.gen.coroutine
+    def get(self):
+        first_user_id = self.request.arguments['first_user_id'][0]
+        second_user_id = self.request.arguments['second_user_id'][0]
+        if options.USE_DB: 
+            cursor = yield self.db.execute("SELECT 1;")
+            result = cursor.fetchone()
+        if options.USE_RC: 
+            result = self.rc.sismember('A','B')
+        self.write("Users %s and %s are related: %s." % (
+            self.request.arguments['first_user_id'][0], 
+            self.request.arguments['second_user_id'][0], 
+            result
+        ))
+        self.finish()
 
 if __name__ == "__main__":
-    parse_command_line()
+    try:
+        parse_config_file('config.conf')
+    except:
+        print 'No config file'
+
+    application = tornado.web.Application([
+        (r"/user_relations/", MainHandler),
+    ])
+
+    ioloop = tornado.ioloop.IOLoop.instance()
+
+    if options.USE_DB:
+        application.db = momoko.Pool(
+            dsn='dbname=exness user=ror password=rorx '
+            'host=localhost port=5432',
+            size=1,
+            ioloop=ioloop,
+        )
+        future = application.db.connect()
+        ioloop.add_future(future, lambda f: ioloop.stop())
+        ioloop.start()
+        future.result()
+
+    if options.USE_RC:
+        redisConnectionPool = redis.ConnectionPool(host='localhost', port=6379, db=12)
+        application.rc = redis.Redis(connection_pool=redisConnectionPool)
+        if options.FLUSH_RC:
+            application.rc.flushdb()
+
     application.listen(8888)
-    tornado.ioloop.IOLoop.instance().start()
+    ioloop.start()
+
