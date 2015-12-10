@@ -1,4 +1,5 @@
 # User IP Relations
+[![Build Status](https://travis-ci.org/TestsForFun/UsersRelated.svg?branch=master)](https://travis-ci.org/TestsForFun/UsersRelated)
 
 $ virtualenv venv
 
