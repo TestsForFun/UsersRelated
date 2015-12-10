@@ -2,7 +2,7 @@
 
 """
 
- # File: Main web module 
+ # File: Main web module
  # Author: Dmitri Plakhov
  # Date: Oct 2015
 
@@ -13,7 +13,6 @@ import psycopg2
 import momoko
 import tornado.web
 import tornado.ioloop
-from datetime import datetime
 from tornado.log import logging
 from tornado.options import options, define, parse_config_file
 
@@ -31,9 +30,9 @@ def _fill_db(db):
     try:
         db.execute('DROP TABLE IF EXISTS %s;' % options.TABLE_NAME)
         db.execute('CREATE TABLE %s (user_id INT, ip INET, dt TIMESTAMP);' % options.TABLE_NAME)
-        for n in range(1,options.TEST_COUNT):
+        for n in range(1, options.TEST_COUNT):
             randip = socket.inet_ntoa(struct.pack('>I', random.randint(1, 0xffffffff)))
-            randuser = random.randint(1000,10000)
+            randuser = random.randint(1000, 10000)
             db.execute("INSERT INTO %s VALUES(%i, '%s', NOW());" % (
                 options.TABLE_NAME,
                 randuser, randip
@@ -44,6 +43,10 @@ def _fill_db(db):
         logging.info(str(error))
 
 class BaseHandler(tornado.web.RequestHandler):
+    """
+    Base
+
+    """
     @property
     def db(self):
         return self.application.db
@@ -59,30 +62,28 @@ class MainHandler(BaseHandler):
         second_user_id = int(self.request.arguments['second_user_id'][0])
         result = False
 
-        if options.USE_RC: 
+        if options.USE_RC:
             sstring = '%s#%s' % (first_user_id, second_user_id)
             result = self.rc.sismember('Related', sstring)
             if not result:
                 logging.info('No matches for %i and %i found before' % (
                     first_user_id, second_user_id
                 ))
-                if options.USE_DB: 
+                if options.USE_DB:
                     logging.info('Trying to analyse DB...')
                     for uid in (first_user_id, second_user_id):
                         if self.rc.scard(uid) > 0:
-                            self.rc.expire(uid,300)
-                        cursor = yield self.db.execute("SELECT host(ip) FROM %s where user_id=%i;" % (
-                            options.TABLE_NAME,
-                            uid
-                        ))
+                            self.rc.expire(uid, 300)
+                        cursor = yield self.db.execute(
+                            "SELECT host(ip) FROM %s where user_id=%i;" % (options.TABLE_NAME, uid))
                         for ips in cursor.fetchall():
-                            self.rc.sadd(uid,ips[0])
-                    if self.rc.scard(first_user_id) > self.rc.scard(second_user_id):        
-                        self.rc.sadd('Related', sstring) 
+                            self.rc.sadd(uid, ips[0])
+                    if self.rc.scard(first_user_id) > self.rc.scard(second_user_id):
+                        self.rc.sadd('Related', sstring)
                         result = True
 
         self.write("Users %i and %i are related: %s." % (
-            first_user_id, second_user_id, 
+            first_user_id, second_user_id,
             result
         ))
         self.finish()
@@ -101,7 +102,7 @@ if __name__ == "__main__":
 
     if options.USE_RC:
         redisConnectionPool = redis.ConnectionPool(
-            host='localhost', 
+            host='localhost',
             port=6379, db=12
         )
         application.rc = redis.Redis(connection_pool=redisConnectionPool)
